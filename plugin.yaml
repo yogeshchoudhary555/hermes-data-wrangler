@@ -1,0 +1,13 @@
+name: data-wrangler
+version: 1.0.0
+description: Deterministic tools for local tabular data — profile CSV/TSV/JSON files with exact stats, run read-only SQL over them, and write cleaned copies with a full change report. Standard library only; no network, no credentials.
+author: Yogesh Choudhary
+license: MIT
+homepage: https://github.com/yogeshchoudhary555/hermes-data-wrangler
+requires_hermes: ">=0.22"
+provides_tools:
+  - table_profile
+  - table_query
+  - table_clean
+provides_hooks: []
+tags: [data, csv, sql, tools]

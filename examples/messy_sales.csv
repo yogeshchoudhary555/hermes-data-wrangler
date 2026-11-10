@@ -1,0 +1,15 @@
+Order ID,Product Name, Region ,Price (USD),Units Sold,Order Date
+1001,Wireless Mouse,West,25.99,3,2026-10-01
+1002, USB Cable ,East,9.99,10,2026-10-01
+1003,Keyboard,West,49.50,2,2026-10-02
+1004,Monitor Stand,North,,1,2026-10-03
+1001,Wireless Mouse,West,25.99,3,2026-10-01
+1006,Laptop Sleeve,South,19.99,5,2026-10-04
+1007,USB Cable,East,9.99,10,2026-10-01
+1008, Webcam ,North,59.00,2,2026-10-05
+1009,Keyboard,West,49.50,,2026-10-05
+1010,Desk Lamp,South,34.99,4,2026-10-06
+,,,,,
+1011,Wireless Mouse,East,25.99,7,2026-10-07
+1012,Monitor Stand,North,45.00,1,2026-10-07
+1013, USB Cable ,West,9.99,12,2026-10-08
