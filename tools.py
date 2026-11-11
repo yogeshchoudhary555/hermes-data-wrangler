@@ -22,6 +22,20 @@ SUPPORTED_SUFFIXES = {".csv", ".tsv", ".json", ".jsonl"}
 _DATE_FORMATS = ("%Y-%m-%d", "%Y/%m/%d", "%d/%m/%Y", "%m/%d/%Y", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S")
 
 
+def _file_safety():
+    """Hermes' agent.file_safety when running inside Hermes, else None.
+
+    Lazy import (cached by sys.modules) so the plugin stays standard-library
+    only when used standalone — there is no module-level Hermes import.
+    """
+    try:
+        import importlib
+
+        return importlib.import_module("agent.file_safety")
+    except Exception:
+        return None
+
+
 # --------------------------------------------------------------------------
 # Loading
 # --------------------------------------------------------------------------
@@ -35,6 +49,16 @@ def _is_null(value) -> bool:
 def _load_table(path_str: str):
     """Load a tabular file. Returns (columns, rows, meta) or raises ValueError."""
     path = Path(path_str).expanduser()
+    # Refuse Hermes credential/secret stores (e.g. ~/.hermes/auth.json) before
+    # any read: table_profile returns every top-level value, so a bare .json
+    # read would hand credential contents to the model. Uses Hermes' own
+    # read guard when running inside Hermes; standalone use has no such
+    # stores in scope and proceeds as before.
+    safety = _file_safety()
+    if safety is not None:
+        blocked = safety.get_read_block_error(str(path.resolve()))
+        if blocked:
+            raise ValueError(blocked)
     if not path.is_file():
         raise ValueError(f"File not found: {path_str}")
     suffix = path.suffix.lower()
@@ -369,6 +393,8 @@ def table_clean(args: dict, **kwargs) -> str:
 
     in_path = Path(meta["path"])
     out_str = (args.get("out") or "").strip()
+    # Default `out` is the input file's own directory (per reviewer
+    # recommendation); only an explicitly named `out` goes elsewhere.
     out_path = Path(out_str).expanduser() if out_str else in_path.with_name(
         in_path.stem + ".cleaned.csv"
     )
@@ -429,6 +455,19 @@ def table_clean(args: dict, **kwargs) -> str:
         cleaned.append({new_columns[i]: vals[i] for i in range(len(columns))})
 
     try:
+        # Refuse protected write targets (e.g. ~/.ssh/authorized_keys,
+        # ~/.hermes/.env) before creating any directory or file. Uses
+        # Hermes' own write guard when running inside Hermes. Note:
+        # `is_write_approval_required` does not exist in current
+        # hermes-agent main or in the installed v0.23.1 package, so there
+        # is no approval-gate function to consult; get_write_denied_error
+        # (the same check Hermes' own file tools apply, including
+        # HERMES_WRITE_SAFE_ROOT) is the guard.
+        safety = _file_safety()
+        if safety is not None:
+            denied = safety.get_write_denied_error(str(out_path.resolve()))
+            if denied:
+                return json.dumps({"error": denied})
         out_path.parent.mkdir(parents=True, exist_ok=True)
         if as_json:
             out_path.write_text(json.dumps(cleaned, ensure_ascii=False, indent=2), encoding="utf-8")
