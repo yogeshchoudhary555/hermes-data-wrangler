@@ -104,8 +104,11 @@ def main():
 
     # --- File-safety guards: fake agent.file_safety via sys.modules ---
     # Proves _load_table consults get_read_block_error and returns its
-    # message, and table_clean consults get_write_denied_error BEFORE
-    # creating any directory or file.
+    # message, and table_clean consults get_write_denied_error AND
+    # is_write_approval_required BEFORE creating any directory or file.
+    # The fake mirrors real agent/file_safety semantics: ~/.ssh/config is
+    # approval-gated, so the deny layer lets it through (interactive tools
+    # prompt for it) and only is_write_approval_required flags it.
     fake_pkg = types.ModuleType("agent")
     fake_pkg.__path__ = []
     fake_fs = types.ModuleType("agent.file_safety")
@@ -115,13 +118,22 @@ def main():
             return f"Access denied: {path} is a protected credential file."
         return None
 
+    def _is_approval_path(path):
+        return path.replace("\\", "/").endswith("/.ssh/config")
+
     def _fake_write_denied(path, *, verb="Write"):
+        if _is_approval_path(path):
+            return None  # approval-gated: deny layer defers to the prompt
         if "/.ssh/" in path.replace("\\", "/"):
             return f"{verb} denied: '{path}' is a protected system/credential file."
         return None
 
+    def _fake_write_approval_required(path):
+        return _is_approval_path(path)
+
     fake_fs.get_read_block_error = staticmethod(_fake_read_block)
     fake_fs.get_write_denied_error = staticmethod(_fake_write_denied)
+    fake_fs.is_write_approval_required = staticmethod(_fake_write_approval_required)
     fake_pkg.file_safety = fake_fs
     sys.modules["agent"] = fake_pkg
     sys.modules["agent.file_safety"] = fake_fs
@@ -143,6 +155,42 @@ def main():
             assert "denied" in blocked_write["error"]
             assert not denied_out.exists(), "guard must refuse before creating the file"
             assert not (Path(tmp) / ".ssh").exists(), "guard must refuse before mkdir"
+
+            # Approval-gated target (~/.ssh/config): the deny layer allows
+            # it, so only the approval check can stop the write — and
+            # table_clean, having no approval channel, must fail closed.
+            approval_out = Path(tmp) / ".ssh" / "config"
+            approval_write = json.loads(ctx.tools["table_clean"]({
+                "path": str(EXAMPLE), "out": str(approval_out),
+            }))
+            print("\nAPPROVAL-GATED WRITE:", approval_write)
+            assert "error" in approval_write
+            assert "approval" in approval_write["error"]
+            assert not approval_out.exists(), "approval guard must refuse before creating the file"
+            assert not (Path(tmp) / ".ssh").exists(), "approval guard must refuse before mkdir"
+
+            # A pre-existing approval-gated file must stay byte-identical.
+            ssh_dir = Path(tmp) / "home2" / ".ssh"
+            ssh_dir.mkdir(parents=True)
+            existing_config = ssh_dir / "config"
+            existing_config.write_text("Host example\n  User sentinel\n", encoding="utf-8")
+            approval_overwrite = json.loads(ctx.tools["table_clean"]({
+                "path": str(EXAMPLE), "out": str(existing_config),
+            }))
+            print("\nAPPROVAL-GATED OVERWRITE:", approval_overwrite)
+            assert "error" in approval_overwrite
+            assert "approval" in approval_overwrite["error"]
+            assert existing_config.read_text(encoding="utf-8") == "Host example\n  User sentinel\n", \
+                "approval guard must not modify an existing approval-gated file"
+
+            # An ordinary target with the safety module loaded still writes.
+            ok_out = Path(tmp) / "cleaned_ok.csv"
+            ok_write = json.loads(ctx.tools["table_clean"]({
+                "path": str(EXAMPLE), "out": str(ok_out),
+            }))
+            print("\nNORMAL WRITE WITH SAFETY LOADED:", ok_write.get("output"))
+            assert "error" not in ok_write
+            assert ok_out.exists()
     finally:
         del sys.modules["agent"]
         del sys.modules["agent.file_safety"]

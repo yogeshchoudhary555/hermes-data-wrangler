@@ -457,17 +457,52 @@ def table_clean(args: dict, **kwargs) -> str:
     try:
         # Refuse protected write targets (e.g. ~/.ssh/authorized_keys,
         # ~/.hermes/.env) before creating any directory or file. Uses
-        # Hermes' own write guard when running inside Hermes. Note:
-        # `is_write_approval_required` does not exist in current
-        # hermes-agent main or in the installed v0.23.1 package, so there
-        # is no approval-gate function to consult; get_write_denied_error
-        # (the same check Hermes' own file tools apply, including
-        # HERMES_WRITE_SAFE_ROOT) is the guard.
+        # Hermes' own write guards when running inside Hermes:
+        # get_write_denied_error (the same check Hermes' own file tools
+        # apply, including HERMES_WRITE_SAFE_ROOT) for hard-denied paths,
+        # and is_write_approval_required for approval-gated ones.
         safety = _file_safety()
         if safety is not None:
-            denied = safety.get_write_denied_error(str(out_path.resolve()))
+            resolved_out = str(out_path.resolve())
+            denied = safety.get_write_denied_error(resolved_out)
             if denied:
                 return json.dumps({"error": denied})
+            # Approval-gated paths (e.g. ~/.ssh/config) are NOT on the
+            # deny list: interactive Hermes file tools ask the user
+            # before writing them. table_clean has no approval channel,
+            # so it fails closed instead of overwriting such a file with
+            # no prompt (the function's own contract: callers without a
+            # channel treat it as a block). is_write_approval_required
+            # exists on hermes-agent main and in v0.22.0/v0.23.1 — this
+            # plugin's >=0.22 floor. If an older file_safety is somehow
+            # loaded anyway, the gate cannot be consulted and an
+            # approval-gated path cannot be told apart from a safe one,
+            # so the write is refused rather than risk the overwrite.
+            approval_required = getattr(safety, "is_write_approval_required", None)
+            if approval_required is None:
+                return json.dumps(
+                    {
+                        "error": (
+                            "Write refused: the loaded agent.file_safety has no "
+                            "is_write_approval_required (added in Hermes v0.22; "
+                            "this plugin requires >=0.22), so approval-gated "
+                            "write targets cannot be checked. Failing closed: "
+                            f"nothing was written to '{resolved_out}'."
+                        )
+                    }
+                )
+            if approval_required(resolved_out):
+                return json.dumps(
+                    {
+                        "error": (
+                            f"Write refused: '{resolved_out}' is an approval-gated "
+                            "path in Hermes (writes there require explicit user "
+                            "approval). table_clean cannot prompt for approval, "
+                            "so it fails closed and nothing was written. Choose "
+                            "a different output path."
+                        )
+                    }
+                )
         out_path.parent.mkdir(parents=True, exist_ok=True)
         if as_json:
             out_path.write_text(json.dumps(cleaned, ensure_ascii=False, indent=2), encoding="utf-8")
